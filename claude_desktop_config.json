@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "pdf-rag": {
+      "command": "python",
+      "args": [
+        "/absolute/path/to/pdf_rag_mcp.py"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
