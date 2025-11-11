@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "pdf-rag": {
+      "command": "pdfrag",
+      "args": ["--db-path", "/Users/wgriffin/.dotfiles/files/mcps/pdfrag/chroma_db"],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
