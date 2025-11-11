@@ -25,17 +25,30 @@ intelligent text segmentation.
 
 ## Installation
 
-### 1. Install Python Dependencies
+### From Source
 
+1. Clone the repository:
 ```bash
-pip install -r requirements.txt
+git clone <repository-url>
+cd pdfrag
 ```
 
-### 2. Download NLTK Data (Automatic)
+2. Install the package:
+```bash
+pip install -e .
+```
+
+3. Verify installation:
+```bash
+pdfrag --help
+pdfrag-cli --help
+```
+
+### NLTK Data (Automatic)
 
 The server automatically downloads required NLTK punkt tokenizer data on first run.
 
-### 3. Install Tesseract (Optional - for OCR)
+### Tesseract (Optional - for OCR)
 
 For scanned PDF support, install Tesseract:
 
@@ -45,12 +58,6 @@ For scanned PDF support, install Tesseract:
 
 The server automatically detects scanned pages and uses OCR when Tesseract is available.
 
-### 4. Test the Server
-
-```bash
-python pdf_rag_mcp.py --help
-```
-
 ## Configuration
 
 ### Database Location
@@ -59,10 +66,10 @@ The server stores its ChromaDB database in a configurable location. You can spec
 
 ```bash
 # Use default location (~/.dotfiles/files/mcps/pdfrag/chroma_db)
-python pdf_rag_mcp.py
+pdfrag
 
 # Use custom database location
-python pdf_rag_mcp.py --db-path /path/to/your/database
+pdfrag --db-path /path/to/your/database
 ```
 
 ### Chunking Parameters
@@ -85,6 +92,23 @@ These can be customized when adding PDFs:
 
 Responses are limited to 25,000 characters by default. If exceeded, results are automatically truncated with a warning
 message.
+
+## Project Structure
+
+```
+pdfrag/
+├── src/pdfrag/          # Main package
+│   ├── server.py        # FastMCP server with 5 tools
+│   ├── database.py      # ChromaDB interface
+│   ├── embeddings.py    # Embedding generation
+│   ├── pdf.py           # PDF text extraction
+│   ├── chunking.py      # Semantic chunking
+│   └── cli.py           # MCP CLI tool
+├── tests/               # Test suite
+├── docs/                # Documentation
+├── examples/            # Configuration examples
+└── pyproject.toml       # Package configuration
+```
 
 ## MCP Tools
 
@@ -259,33 +283,17 @@ Add the server:
 {
   "mcpServers": {
     "pdf-rag": {
-      "command": "python",
-      "args": [
-        "/absolute/path/to/pdf_rag_mcp.py"
-      ]
+      "command": "pdfrag",
+      "args": ["--db-path", "/path/to/your/chroma_db"],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
     }
   }
 }
 ```
 
-**Custom Database Location:**
-
-To use a custom database path with Claude Desktop:
-
-```json
-{
-  "mcpServers": {
-    "pdf-rag": {
-      "command": "python",
-      "args": [
-        "/absolute/path/to/pdf_rag_mcp.py",
-        "--db-path",
-        "/custom/path/to/database"
-      ]
-    }
-  }
-}
-```
+See `examples/claude_desktop_config.json` for a complete example.
 
 ### 2. Restart Claude Desktop
 
