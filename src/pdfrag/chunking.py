@@ -95,9 +95,9 @@ def create_chunks_from_pages(pages_text: List[Dict[str, Any]],
         # Create chunks for this page
         chunks = chunk_text(page_text, chunk_size, overlap)
 
-        for chunk_text in chunks:
+        for chunk in chunks:
             all_chunks.append({
-                'text': chunk_text,
+                'text': chunk,
                 'page': page_num,
                 'chunk_index': global_chunk_idx
             })
