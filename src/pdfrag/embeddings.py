@@ -21,12 +21,14 @@ class EmbeddingGenerator:
         model_name: Name of the loaded model
     """
 
-    def __init__(self, model_name: str = DEFAULT_MODEL):
+    def __init__(self, model_name: str = DEFAULT_MODEL, device: str = "cpu"):
         """Initialize embedding generator with specified model.
 
         Args:
             model_name: Name of sentence-transformers model to use
                        (default: multi-qa-mpnet-base-dot-v1)
+            device: Torch device to run inference on ('cpu', 'cuda', etc.)
+                   (default: 'cpu')
 
         Example:
             >>> generator = EmbeddingGenerator()
@@ -34,7 +36,7 @@ class EmbeddingGenerator:
             >>> print(len(embeddings[0]))  # 768
         """
         self.model_name = model_name
-        self.model = SentenceTransformer(model_name)
+        self.model = SentenceTransformer(model_name, device=device)
 
     def generate(self, texts: List[str], show_progress: bool = False) -> List[List[float]]:
         """Generate embeddings for batch of texts.
