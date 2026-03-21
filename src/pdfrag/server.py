@@ -17,7 +17,12 @@ from mcp.server.fastmcp import FastMCP, Context
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 from .pdf import extract_text_from_pdf
-from .chunking import create_chunks_from_pages, DEFAULT_CHUNK_SIZE, DEFAULT_OVERLAP
+from .chunking import (
+    create_chunks_from_pages,
+    create_paragraph_chunks_from_pages,
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_OVERLAP,
+)
 from .embeddings import EmbeddingGenerator, DEFAULT_MODEL
 from .database import PDFDatabase
 
@@ -39,6 +44,12 @@ class ResponseFormat(str, Enum):
     JSON = "json"
 
 
+class ChunkingStrategy(str, Enum):
+    """Chunking strategy for PDF ingestion."""
+    SENTENCE = "sentence"
+    PARAGRAPH = "paragraph"
+
+
 # Global state for lifespan management
 def create_lifespan(db_path: str):
     """Create a lifespan function with the specified database path.
@@ -52,19 +63,18 @@ def create_lifespan(db_path: str):
     @asynccontextmanager
     async def app_lifespan(app):
         """Manage resources that live for the server's lifetime."""
-        # Initialize database
-        database = PDFDatabase(db_path)
+        from sentence_transformers import CrossEncoder
 
-        # Initialize embedding generator
+        database = PDFDatabase(db_path)
         embedding_gen = EmbeddingGenerator(DEFAULT_MODEL)
+        reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
         yield {
             "database": database,
             "embedding_generator": embedding_gen,
+            "reranker": reranker,
             "collection": database.collection  # For backward compatibility
         }
-
-        # Cleanup on shutdown (if needed)
 
     return app_lifespan
 
@@ -160,6 +170,10 @@ class PdfAddInput(BaseModel):
         ge=0,
         le=10
     )
+    chunking_strategy: ChunkingStrategy = Field(
+        default=ChunkingStrategy.SENTENCE,
+        description="Chunking strategy: 'sentence' (sentence-based) or 'paragraph' (paragraph-aware)"
+    )
 
     @field_validator('pdf_path')
     @classmethod
@@ -232,6 +246,10 @@ class PdfSearchInput(BaseModel):
         default=ResponseFormat.MARKDOWN,
         description="Output format: 'markdown' for human-readable or 'json' for machine-readable"
     )
+    rerank: bool = Field(
+        default=False,
+        description="Re-rank results with a cross-encoder for higher precision (slower)"
+    )
 
 
 class PdfKeywordSearchInput(BaseModel):
@@ -280,7 +298,7 @@ def get_db_path_from_args() -> str:
         default=DEFAULT_DB_PATH,
         help=f"Path to ChromaDB database directory (default: {DEFAULT_DB_PATH})"
     )
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
     return args.db_path
 
 
@@ -350,9 +368,14 @@ async def pdf_add(params: PdfAddInput, ctx: Context) -> str:
                 "message": "Could not extract any text from PDF. The file may be empty, corrupted, or OCR failed (ensure tesseract is installed for scanned PDFs)."
             }, indent=2)
 
-        # Create semantic chunks
+        # Create chunks using the requested strategy
         ctx.report_progress(0.4, "Creating semantic chunks...")
-        chunks = create_chunks_from_pages(pages_text, params.chunk_size, params.overlap)
+        if params.chunking_strategy == ChunkingStrategy.PARAGRAPH:
+            chunks = create_paragraph_chunks_from_pages(pages_text)
+        else:
+            chunks = create_chunks_from_pages(
+                pages_text, params.chunk_size or DEFAULT_CHUNK_SIZE, params.overlap or DEFAULT_OVERLAP
+            )
 
         if not chunks:
             return json.dumps({
@@ -378,6 +401,7 @@ async def pdf_add(params: PdfAddInput, ctx: Context) -> str:
             "filename": filename,
             "pages": len(pages_text),
             "chunks": chunk_count,
+            "chunking_strategy": params.chunking_strategy.value,
             "chunk_size": params.chunk_size,
             "overlap": params.overlap
         }, indent=2)
@@ -544,12 +568,22 @@ async def pdf_search_similarity(params: PdfSearchInput, ctx: Context) -> str:
         # Generate query embedding
         query_embedding = embedding_gen.generate_single(params.query)
 
-        # Perform search
+        # Perform search (fetch extra candidates when reranking)
+        fetch_k = max(params.top_k * 3, 25) if params.rerank else params.top_k
         results = database.search_similarity(
             query_embedding,
-            top_k=params.top_k,
+            top_k=fetch_k,
             document_filter=params.document_filter
         )
+
+        # Rerank with cross-encoder when requested
+        if params.rerank and results:
+            reranker = ctx.request_context.lifespan_context["reranker"]
+            pairs = [(params.query, r['text']) for r in results]
+            scores = reranker.predict(pairs)
+            for result, score in zip(results, scores):
+                result['similarity'] = float(score)
+            results = sorted(results, key=lambda r: r['similarity'], reverse=True)[:params.top_k]
 
         if not results:
             if params.response_format == ResponseFormat.MARKDOWN:
