@@ -351,12 +351,15 @@ async def pdf_add(params: PdfAddInput, ctx: Context) -> str:
 
         # Check if document already exists
         if database.document_exists(document_id):
-            existing = database.collection.get(where={"document_id": document_id})
+            existing_docs = database.list_documents()
+            existing_doc = next(
+                (d for d in existing_docs if d['document_id'] == document_id), None
+            )
             return json.dumps({
                 "status": "already_exists",
                 "message": f"Document '{filename}' is already in the database",
                 "document_id": document_id,
-                "existing_chunks": len(existing['ids'])
+                "existing_chunks": existing_doc['chunk_count'] if existing_doc else 0
             }, indent=2)
 
         # Extract text from PDF

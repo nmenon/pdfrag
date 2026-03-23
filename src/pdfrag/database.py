@@ -49,7 +49,7 @@ class PDFDatabase:
         Returns:
             True if document exists, False otherwise
         """
-        results = self.collection.get(where={"document_id": document_id})
+        results = self.collection.get(where={"document_id": document_id}, limit=1)
         return len(results['ids']) > 0
 
     def add_document(self, document_id: str, filename: str, chunks: List[Dict[str, Any]],
@@ -136,23 +136,27 @@ class PDFDatabase:
             >>> for doc in docs:
             ...     print(f"{doc['filename']}: {doc['chunk_count']} chunks")
         """
-        all_data = self.collection.get()
-
-        if not all_data['ids']:
-            return []
-
-        # Group by document_id
+        # Paginate to avoid SQLite's variable limit with large collections
+        page_size = 5000
+        offset = 0
         doc_map = {}
-        for metadata in all_data['metadatas']:
-            doc_id = metadata['document_id']
-            if doc_id not in doc_map:
-                doc_map[doc_id] = {
-                    'document_id': doc_id,
-                    'filename': metadata['filename'],
-                    'chunk_count': 0,
-                    'added_date': 'N/A'
-                }
-            doc_map[doc_id]['chunk_count'] += 1
+        while True:
+            batch = self.collection.get(
+                limit=page_size, offset=offset, include=['metadatas']
+            )
+            if not batch['ids']:
+                break
+            for metadata in batch['metadatas']:
+                doc_id = metadata['document_id']
+                if doc_id not in doc_map:
+                    doc_map[doc_id] = {
+                        'document_id': doc_id,
+                        'filename': metadata['filename'],
+                        'chunk_count': 0,
+                        'added_date': 'N/A'
+                    }
+                doc_map[doc_id]['chunk_count'] += 1
+            offset += page_size
 
         return list(doc_map.values())
 
@@ -215,30 +219,42 @@ class PDFDatabase:
             >>> print(f"Found {len(results)} matches")
         """
         where_filter = {"document_id": document_filter} if document_filter else None
-        all_data = self.collection.get(where=where_filter)
+        lowered_keywords = [kw.lower() for kw in keywords]
 
-        if not all_data['ids']:
-            return []
-
-        # Score each chunk based on keyword matches
+        # Paginate to avoid SQLite's variable limit with large collections
+        page_size = 5000
+        offset = 0
         scored_results = []
-        for i, doc_id in enumerate(all_data['ids']):
-            text = all_data['documents'][i].lower()
+        while True:
+            batch = self.collection.get(
+                where=where_filter,
+                limit=page_size,
+                offset=offset,
+                include=['documents', 'metadatas']
+            )
+            if not batch['ids']:
+                break
 
-            # Count keyword occurrences
-            score = sum(text.count(keyword.lower()) for keyword in keywords)
+            # Score each chunk in this batch based on keyword matches
+            for i, doc_id in enumerate(batch['ids']):
+                text = batch['documents'][i].lower()
+                score = sum(text.count(kw) for kw in lowered_keywords)
+                if score > 0:
+                    scored_results.append({
+                        'chunk_id': doc_id,
+                        'document': batch['metadatas'][i]['filename'],
+                        'document_id': batch['metadatas'][i]['document_id'],
+                        'page': batch['metadatas'][i]['page'],
+                        'chunk_index': batch['metadatas'][i]['chunk_index'],
+                        'text': batch['documents'][i],
+                        'similarity': score / len(keywords),
+                        'keyword_matches': score
+                    })
 
-            if score > 0:
-                scored_results.append({
-                    'chunk_id': doc_id,
-                    'document': all_data['metadatas'][i]['filename'],
-                    'document_id': all_data['metadatas'][i]['document_id'],
-                    'page': all_data['metadatas'][i]['page'],
-                    'chunk_index': all_data['metadatas'][i]['chunk_index'],
-                    'text': all_data['documents'][i],
-                    'similarity': score / len(keywords),
-                    'keyword_matches': score
-                })
+            offset += page_size
+
+        if not scored_results:
+            return []
 
         # Sort by score descending
         scored_results.sort(key=lambda x: x['keyword_matches'], reverse=True)
