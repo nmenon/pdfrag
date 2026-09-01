@@ -13,7 +13,7 @@ from enum import Enum
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from mcp.server.fastmcp import FastMCP, Context
+from fastmcp import FastMCP, Context
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 from .pdf import extract_text_from_pdf
@@ -342,8 +342,8 @@ async def pdf_add(params: PdfAddInput, ctx: Context) -> str:
     """
     try:
         # Get lifespan resources
-        database = ctx.request_context.lifespan_context["database"]
-        embedding_gen = ctx.request_context.lifespan_context["embedding_generator"]
+        database = ctx.lifespan_context["database"]
+        embedding_gen = ctx.lifespan_context["embedding_generator"]
 
         # Generate document ID from file hash
         document_id = get_file_hash(params.pdf_path)
@@ -363,7 +363,7 @@ async def pdf_add(params: PdfAddInput, ctx: Context) -> str:
             }, indent=2)
 
         # Extract text from PDF
-        ctx.report_progress(0.2, "Extracting text from PDF...")
+        await ctx.report_progress(0.2, message="Extracting text from PDF...")
         pages_text = extract_text_from_pdf(params.pdf_path)
 
         if not pages_text:
@@ -373,7 +373,7 @@ async def pdf_add(params: PdfAddInput, ctx: Context) -> str:
             }, indent=2)
 
         # Create chunks using the requested strategy
-        ctx.report_progress(0.4, "Creating semantic chunks...")
+        await ctx.report_progress(0.4, message="Creating semantic chunks...")
         if params.chunking_strategy == ChunkingStrategy.PARAGRAPH:
             chunks = create_paragraph_chunks_from_pages(pages_text)
         else:
@@ -388,15 +388,15 @@ async def pdf_add(params: PdfAddInput, ctx: Context) -> str:
             }, indent=2)
 
         # Generate embeddings
-        ctx.report_progress(0.6, f"Generating embeddings for {len(chunks)} chunks...")
+        await ctx.report_progress(0.6, message=f"Generating embeddings for {len(chunks)} chunks...")
         chunk_texts = [chunk['text'] for chunk in chunks]
         embeddings = embedding_gen.generate(chunk_texts, show_progress=False)
 
         # Store in database
-        ctx.report_progress(0.8, "Storing in ChromaDB...")
+        await ctx.report_progress(0.8, message="Storing in ChromaDB...")
         chunk_count = database.add_document(document_id, filename, chunks, embeddings)
 
-        ctx.report_progress(1.0, "Complete!")
+        await ctx.report_progress(1.0, message="Complete!")
 
         return json.dumps({
             "status": "success",
@@ -446,7 +446,7 @@ async def pdf_remove(params: PdfRemoveInput, ctx: Context) -> str:
         Output: {"status": "success", "removed_chunks": 45}
     """
     try:
-        database = ctx.request_context.lifespan_context["database"]
+        database = ctx.lifespan_context["database"]
 
         # Remove document
         result = database.remove_document(params.document_id)
@@ -509,7 +509,7 @@ async def pdf_list(params: PdfListInput, ctx: Context) -> str:
         }
     """
     try:
-        database = ctx.request_context.lifespan_context["database"]
+        database = ctx.lifespan_context["database"]
 
         # Get all documents
         documents = database.list_documents()
@@ -566,8 +566,8 @@ async def pdf_search_similarity(params: PdfSearchInput, ctx: Context) -> str:
         Output: List of 3 most relevant chunks with their content and metadata
     """
     try:
-        database = ctx.request_context.lifespan_context["database"]
-        embedding_gen = ctx.request_context.lifespan_context["embedding_generator"]
+        database = ctx.lifespan_context["database"]
+        embedding_gen = ctx.lifespan_context["embedding_generator"]
 
         # Generate query embedding
         query_embedding = embedding_gen.generate_single(params.query)
@@ -582,7 +582,7 @@ async def pdf_search_similarity(params: PdfSearchInput, ctx: Context) -> str:
 
         # Rerank with cross-encoder when requested
         if params.rerank and results:
-            reranker = ctx.request_context.lifespan_context["reranker"]
+            reranker = ctx.lifespan_context["reranker"]
             pairs = [(params.query, r['text']) for r in results]
             scores = reranker.predict(pairs)
             for result, score in zip(results, scores):
@@ -659,7 +659,7 @@ async def pdf_search_keywords(params: PdfKeywordSearchInput, ctx: Context) -> st
         Output: Chunks containing these keywords, ranked by relevance
     """
     try:
-        database = ctx.request_context.lifespan_context["database"]
+        database = ctx.lifespan_context["database"]
 
         # Convert keywords to list
         keywords = params.keywords.split()
